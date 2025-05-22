@@ -1,0 +1,11 @@
+project_id = "your_project_id"
+region     = "asia-northeast1"
+zone       = "asia-northeast1-a"
+service_account_key = "your_service_account_key.json"
+bucket_name = "your_gcs_bucket_name"
+db_snapshot_retention_days = 30
+machine_type = "e2-medium"
+boot_disk_size = 50  # GB for OS and Docker
+boot_disk_type = "pd-balanced"
+ssh_username = "aibos"
+ssh_public_key_file = "~/.ssh/focust_vm_key.pub"
