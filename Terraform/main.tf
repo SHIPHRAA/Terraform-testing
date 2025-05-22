@@ -24,7 +24,7 @@ locals {
     systemctl restart sshd
   EOF
 
-  # Base startup script with all common configuration
+  # Base startup script with all common configuration and all configuration files
   base_vm_startup_script = <<-EOF
     #!/bin/bash
     # Update system
