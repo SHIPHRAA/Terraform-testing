@@ -31,7 +31,7 @@ locals {
     apt-get update
     apt-get upgrade -y
 
-    # Install Docker
+    # Install docker here
     curl -fsSL https://get.docker.com -o get-docker.sh
     sh get-docker.sh
 
