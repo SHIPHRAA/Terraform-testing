@@ -1,4 +1,5 @@
-# Define a base script with common functionality
+##main.tf
+ Define a base script with common functionality
 locals {
   password_setup_script = <<-EOF
     # Set up the user password
