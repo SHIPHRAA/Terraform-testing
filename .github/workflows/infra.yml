@@ -1,0 +1,144 @@
+name: Terraform Infra
+
+on:
+  push:
+    branches: # Infrastructure changes are only made on the production branch.
+      - master
+    paths:
+      - "terraform/**"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "terraform/**"
+  workflow_dispatch:
+
+env:
+  TF_VERSION: "1.5.7"
+  WORKING_DIR: "terraform"
+
+jobs:
+  terraform:
+    name: "Terraform"
+    runs-on: ubuntu-latest
+
+    # Set the working directory to terraform folder
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download and install Terraform
+        run: |
+          wget https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
+          unzip -o terraform_${TF_VERSION}_linux_amd64.zip
+          sudo mv terraform /usr/local/bin/
+          terraform --version
+
+      - name: Setup Google Cloud credentials file
+        run: |
+          echo '${{ secrets.GCLOUD_SERVICE_ACCOUNT_KEY }}' > /tmp/sa-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
+          chmod 600 /tmp/sa-key.json
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TF_VM_SSH_PUBLIC_KEY }}" > ~/.ssh/id_rsa.pub
+          chmod 600 ~/.ssh/id_rsa.pub
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Format
+        run: terraform fmt -check
+        continue-on-error: true
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: |
+          terraform plan \
+            -var="project_id=${{ secrets.GCLOUD_PROJECT_ID }}" \
+            -var="region=${{ secrets.GCLOUD_REGION }}" \
+            -var="zone=${{ secrets.GCLOUD_ZONE }}" \
+            -var="bucket_name=${{ secrets.GCS_BUCKET_NAME }}" \
+            -var="ssh_public_key_file=~/.ssh/id_rsa.pub" \
+            -var="ghcr_auth_token=${{ secrets.TF_GHCR_AUTH_TOKEN }}" \
+            -var="ssh_username=${{ secrets.VM_USERNAME }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
+        run: |
+          terraform apply -auto-approve \
+            -var="project_id=${{ secrets.GCLOUD_PROJECT_ID }}" \
+            -var="region=${{ secrets.GCLOUD_REGION }}" \
+            -var="zone=${{ secrets.GCLOUD_ZONE }}" \
+            -var="bucket_name=${{ secrets.GCS_BUCKET_NAME }}" \
+            -var="ssh_public_key_file=~/.ssh/id_rsa.pub" \
+            -var="ghcr_auth_token=${{ secrets.TF_GHCR_AUTH_TOKEN }}" \
+            -var="ssh_username=${{ secrets.VM_USERNAME }}"
+
+      - name: Output Server IPs
+        if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Staging IP: $(terraform output -raw staging_ip)"
+          echo "Production IP: $(terraform output -raw production_ip)"
+
+          # Note: Direct secret updates require additional permissions
+          echo "::notice::Please manually update STAGING_HOST and VM_HOST secrets with these values if needed"
+
+    # - name: Update Deployment Environments
+    #   if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
+    #   uses: actions/github-script@v7
+    #   with:
+    #     script: |
+    #       const stagingIp = process.env.STAGING_IP || null;
+    #       const productionIp = process.env.PRODUCTION_IP || null;
+
+    #       // Update staging environment
+    #       await github.rest.repos.createOrUpdateEnvironment({
+    #         owner: context.repo.owner,
+    #         repo: context.repo.repo,
+    #         environment_name: 'staging',
+    #         deployment_branch_policy: null
+    #       });
+
+    #       // Update production environment
+    #       await github.rest.repos.createOrUpdateEnvironment({
+    #         owner: context.repo.owner,
+    #         repo: context.repo.repo,
+    #         environment_name: 'production',
+    #         deployment_branch_policy: {
+    #           protected_branches: false,
+    #           custom_branch_policies: true
+    #         }
+    #       });
+
+    #       // Output the environment URLs
+    #       if (stagingIp) {
+    #         core.notice(`Updated staging environment URL: http://${stagingIp}/`);
+    #       }
+
+    #       if (productionIp) {
+    #         core.notice(`Updated production environment URL: http://${productionIp}/`);
+    #       }
+    #   env:
+    #     STAGING_IP: ${{ steps.get_ips.outputs.staging_ip }}
+    #     PRODUCTION_IP: ${{ steps.get_ips.outputs.production_ip }}
+
+    # - name: Get IPs for Update
+    #   id: get_ips
+    #   if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
+    #   run: |
+    #     STAGING_IP=$(terraform output -raw staging_ip)
+    #     PRODUCTION_IP=$(terraform output -raw production_ip)
+
+    #     echo "staging_ip=$STAGING_IP" >> $GITHUB_OUTPUT
+    #     echo "production_ip=$PRODUCTION_IP" >> $GITHUB_OUTPUT
