@@ -1,0 +1,78 @@
+name: Code Review
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches-ignore:
+      - main
+      - master
+    types: [opened, synchronize, reopened]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      # Process App ID to ensure it's an integer
+      - name: Process App ID
+        id: process_id
+        run: |
+          APP_ID=$(echo "${{ secrets.GH_APP_ID }}" | tr -d '"' | tr -d "'" | tr -d '[:space:]')
+          echo "::set-output name=app_id::$APP_ID"
+
+      # Generate GitHub token with required permissions
+      - name: Generate token
+        id: generate_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ steps.process_id.outputs.app_id }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18.x"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@aibos-dev"
+
+      # Configure npm for GitHub Packages
+      - name: Authenticate with GitHub Package Registry
+        run: |
+          echo "@aibos-dev:registry=https://npm.pkg.github.com" > ~/.npmrc
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> ~/.npmrc
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Code Reviewer
+        run: |
+          npm install -g @aibos-dev/aibos-code-reviewer@1.0.45 --//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git Identity
+        run: |
+          git config --global user.name "aibos-code-reviewer[bot]"
+          git config --global user.email "${{ secrets.GH_APP_ID }}+aibos-code-reviewer[bot]@users.noreply.github.com"
+
+      - name: Run Code Review
+        run: aibos-code-reviewer --debug false --disable-review false --disable-release-notes false --openai-heavy-model gpt-4o-mini --openai-light-model gpt-4o-mini
+        env:
+          GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEBUG: "true"
